@@ -5,6 +5,7 @@ Copyright (C) 2019 NuMat Technologies
 """
 try:
     import serial
+    from time import sleep
 except ImportError:
     pass
 
@@ -42,11 +43,12 @@ class FlowMeter(object):
 
         self.keys = ['pressure', 'temperature', 'volumetric_flow', 'mass_flow',
                      'setpoint', 'gas']
-        self.gases = ['Air', 'Ar', 'CH4', 'CO', 'CO2', 'C2H6', 'H2', 'He',
-                      'N2', 'N2O', 'Ne', 'O2', 'C3H8', 'n-C4H10', 'C2H2',
-                      'C2H4', 'i-C2H10', 'Kr', 'Xe', 'SF6', 'C-25', 'C-10',
-                      'C-8', 'C-2', 'C-75', 'A-75', 'A-25', 'A1025', 'Star29',
-                      'P-5']
+        self.gases = self.gas_table()
+                    #['Air', 'Ar', 'CH4', 'CO', 'CO2', 'C2H6', 'H2', 'He',
+                    #  'N2', 'N2O', 'Ne', 'O2', 'C3H8', 'n-C4H10', 'C2H2',
+                    #  'C2H4', 'i-C2H10', 'Kr', 'Xe', 'SF6', 'C-25', 'C-10',
+                    #  'C-8', 'C-2', 'C-75', 'A-75', 'A-25', 'A1025', 'Star29',
+                    #  'P-5']
 
         self.open = True
 
@@ -127,7 +129,19 @@ class FlowMeter(object):
             self.keys.insert(5, 'total flow')
         return {k: (v if k == self.keys[-1] else float(v))
                 for k, v in zip(self.keys, values)}
-
+    
+    def gas_table(self):
+        """Querey the list of installed gas calibrations"""
+        self._test_controller_open()
+        table = {}
+        
+        command = '{addr}??G*\r'.format(addr=self.address)
+        self._write(command)
+        while self.connection.in_waiting:
+            row = self._readline().split()
+            table = [row[2]] = row[1] 
+        return table 
+    
     def set_gas(self, gas, retries=2):
         """Set the gas type.
 
@@ -142,8 +156,8 @@ class FlowMeter(object):
 
         if gas not in self.gases:
             raise ValueError("{} not supported!".format(gas))
-        command = '{addr}$${gas}\r'.format(addr=self.address,
-                                           gas=self.gases.index(gas))
+        command = '{addr}{gas}\r'.format(addr=self.address,
+                                           gas=self.gases[gas])
         line = self._write_and_read(command, retries)
         if line.split()[-1] != gas:
             raise IOError("Could not set gas type")
@@ -175,7 +189,21 @@ class FlowMeter(object):
             FlowMeter.open_ports[self.port] = (connection, refcount - 1)
 
         self.open = False
-
+    
+    def _write(self, command, trtries=1):
+        """Exclusively write command"""
+        self._test_controler_open()
+        
+        self.flush()
+        
+        for _ in range(retries+1):
+            self.connection.write(command.encode('ascii'))
+            sleep(0.1)
+            if self.connection.in_waiting:
+                break
+        else:
+            raise IOError("Could not read from flow controller.")
+            
     def _write_and_read(self, command, retries=2):
         """Write a command and reads a response from the flow controller."""
         self._test_controller_open()
@@ -206,8 +234,7 @@ class FlowMeter(object):
             else:
                 break
         return line.decode('ascii').strip()
-
-
+    
 class FlowController(FlowMeter):
     """Python driver for Alicat Flow Controllers.
 
